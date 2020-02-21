@@ -1,0 +1,58 @@
+#####################
+
+# ALL TOGETHER NOW!
+# Loop using "shuf" to generate 1000 random lists of genes from reference list
+# for i in {1..10}
+# do
+# 	gshuf -n 79 BCCH_HumanGeneList.txt -o RandGeneList_${i%.*}.txt
+# done
+
+for i in {1..1000}
+do
+	gshuf -n 9 BCCH_HumanGeneList_CHRZ.txt -o RandGeneList_CHRZ_${i%.*}.txt
+done
+
+for i in {1..1000}
+do
+	gshuf -n 70 BCCH_HumanGeneList_autosomes.txt -o RandGeneList_autosomes_${i%.*}.txt
+done
+
+for i in {1..1000}
+do
+	cat RandGeneList_CHRZ_$i.txt RandGeneList_autosomes_$i.txt > RandGeneList_${i%.*}.txt
+done
+
+
+# Change end of line to comma
+# tr '\n' ',' < BCCH_HumanGeneList.txt 1<> BCCH_HumanGeneList.txt
+# sed 's/.$//' BCCH_HumanGeneList.txt > BCCH_HumanGeneListstring.txt
+
+tr '\n' ',' < BCCH_HumanGeneList.txt > BCCH_HumanGeneListstring.txt
+sed 's/.$//' < BCCH_HumanGeneListstring.txt 1<> BCCH_HumanGeneListstring.txt
+
+
+# Use PANTHER API to run PANTHER GO analysis on 1000 random gene sets
+for i in RandGeneList_*.txt
+do
+	REFGENELISTstring=$(<BCCH_HumanGeneListstring.txt)
+	tr '\n' ',' < $i 1<> $i # Replaces all line endings with commas (formatting for PANTHER API input)
+	sed 's/.$//' < $i 1<> $i # Removes final comma from line
+	RANDGENELIST=$(<$i) # Create variable for text of current random gene list in loop
+	curl -X POST "http://www.pantherdb.org/services/oai/pantherdb/enrich/overrep?geneInputList=$RANDGENELIST&organism=9606&refInputList=$REFGENELISTstring&refOrganism=9606&annotDataSet=ANNOT_TYPE_ID_PANTHER_GO_SLIM_BP&enrichmentTestType=FISHER&correction=NONE" -H "accept: application/json" > Results_${i%.*}.txt
+done
+
+# Use "pcregrep" to extract useful part of results file, then use "perl" to reformat results into tab-delimited table
+# Loop both steps together, works!
+for i in Results_RandGeneList_*.txt
+do
+	pcregrep -M '.*"number_in_list": \d+,\n.*"fold_enrichment": .*,\n.*"fdr": .*,\n.*"expected": .*,\n.*"number_in_reference": \d+,\n.*"pValue": \d+.\d+,\n.*\n.*"id": "GO:\d+",\n.*"label": ".*"' $i | perl -0777 -pe 's/.*"number_in_list": (.*?),\n.*"fold_enrichment": (.*?),\n.*"fdr": (.*?),\n.*"expected": (.*?),\n.*"number_in_reference": (.*?),\n.*"pValue": (.*?),\n.*\n.*"id": "(.*?)",\n.*"label": "(.*?)"/$7\t$1\t$2\t$3\t$4\t$5\t$6\t$8/g' > BCCHhybrid_${i%.*}.txt
+done
+
+# Now a loop that will put all significant results into one file
+for i in BCCHhybrid_Results_RandGeneList_*.txt
+do
+	awk '$7 <= 0.05' $i >> sigRand_output.txt
+done
+
+# Extract column with GO descriptions, then sort and count unique GO terms
+cut -f8 sigRand_output.txt | sort | uniq -c > sigRand_count.txt
